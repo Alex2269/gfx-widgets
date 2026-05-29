@@ -1,0 +1,42 @@
+/* draw_grid_gfx.c - Оптимізована версія (лінії замість точок) */
+#include "draw_grid_gfx.h"
+#include "graphics.h"
+#include "gfx.h"
+
+void draw_grid_gfx(int screenWidth, int screenHeight, int cellSize, int padding) {
+    // Визначаємо область для малювання сітки з урахуванням padding
+    int startX = padding;
+    int startY = padding;
+    int endX = screenWidth - padding;
+    int endY = screenHeight - padding;
+    int width = endX - startX;
+    int height = endY - startY;
+
+    // Визначаємо скільки клітинок поміщається по горизонталі і вертикалі
+    int cellsX = width / cellSize;
+    int cellsY = height / cellSize;
+
+    // Вираховуємо відступи, щоб сітка була центрована всередині області
+    int offsetX = startX + (width - cellsX * cellSize) / 2;
+    int offsetY = startY + (height - cellsY * cellSize) / 2;
+
+    int limitX = offsetX + cellsX * cellSize;
+    int limitY = offsetY + cellsY * cellSize;
+
+    /* 
+     * Замість малювання тисяч квадратиків 2x2, малюємо суцільні лінії.
+     * Це набагато швидше для X11.
+     */
+
+    // 1. Горизонтальні лінії (Сині)
+    gfx_set_color_uint32(0x0000FF); // BLUE
+    for (int y = offsetY; y <= limitY; y += cellSize) {
+        gfx_line(offsetX, y, limitX, y);
+    }
+
+    // 2. Вертикальні лінії (SkyBlue)
+    gfx_set_color_uint32(0x87CEEB); // SKYBLUE
+    for (int x = offsetX; x <= limitX; x += cellSize) {
+        gfx_line(x, offsetY, x, limitY);
+    }
+}
