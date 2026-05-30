@@ -27,6 +27,9 @@ void DrawRoundedRectangleEx(int x, int y, int w, int h, int radius, int thicknes
 /** 🔹 Контур заокругленого прямокутника (1px) */
 void DrawRoundedRectangleLines(int x, int y, int w, int h, int radius, uint32_t color);
 
+/** 🔹 Контур заокругленого прямокутника (з thickness товщиною) */
+void DrawRoundedRectangleLinesEx(int x, int y, int w, int h, int radius, float thickness, uint32_t color);
+
 #ifdef __cplusplus
 }
 #endif

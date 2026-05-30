@@ -99,3 +99,32 @@ void DrawRoundedRectangleLines(int x, int y, int w, int h, int radius, uint32_t 
         gfx_line(x + w - radius + dx, y + h - i, x + w - radius + next_dx, y + h - i - arc_step);
     }
 }
+
+/* ============================================================================
+ � *� КОНТУР ЗАОКРУГЛЕННОГО ПРЯМОКУТНИКА ЗІ ЗМІННОЮ ТОВЩИНОЮ
+ ============================================================================ */
+void DrawRoundedRectangleLinesEx(int x, int y, int w, int h, int radius, float thickness, uint32_t color) {
+    if (w <= 0 || h <= 0 || thickness <= 0.0f) return;
+
+    int t = (int)thickness;
+    if (t < 1) t = 1;
+
+    int maxR = (w < h) ? w / 2 : h / 2;
+    if (radius > maxR) radius = maxR;
+
+    /* Малюємо концентричні контури від зовнішнього до внутрішнього */
+    for (int i = 0; i < t; i++) {
+        int ix = x + i;
+        int iy = y + i;
+        int iw = w - 2 * i;
+        int ih = h - 2 * i;
+        int ir = radius - i;
+
+        /* Перевірка, щоб не вийти за межі */
+        if (iw <= 0 || ih <= 0 || ir < 0) break;
+        if (ir > iw/2) ir = iw/2;
+        if (ir > ih/2) ir = ih/2;
+
+        DrawRoundedRectangleLines(ix, iy, iw, ih, ir, color);
+    }
+}
