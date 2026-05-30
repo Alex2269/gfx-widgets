@@ -1,12 +1,28 @@
-/* gui_slider_spinner_gfx.c */
+/*
+gui_slider_spinner_gfx.c
+Адаптація Gui_SliderSpinner для X11/gfx
+✅ Логіка інверсій збережена для сумісності з raylib-версією
+✅ Покращено стиль: константи, хелпери, коментарі
+*/
+
 #include "gui_slider_spinner_gfx.h"
 #include "color_utils.h"
 #include "graphics.h"
 #include "gfx.h"
-#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <math.h>
+
+/* ================= КОНСТАНТИ ================= */
+#define AUTO_REPEAT_DELAY_SEC   0.175f
+#define AUTO_REPEAT_BASE_SEC    0.250f
+#define AUTO_REPEAT_MIN_SEC     0.005f
+#define AUTO_REPEAT_ACCEL       0.075f
+#define SLIDER_KNOB_SIZE        10
+#define SLIDER_KNOB_OFFSET      5
+#define TEXT_PADDING            4
+#define TEXT_BORDER_THICKNESS   1
 
 /* ================= ГЛОБАЛЬНІ ЗМІННІ СТАНУ ================= */
 static HoldStateGfx holdLeftStates[MAX_SPINNERS_GFX] = {{0}};
@@ -15,20 +31,53 @@ static bool widgetActive[MAX_SPINNERS_GFX] = {false};
 
 /* ================= ДОПОМІЖНІ ФУНКЦІЇ ================= */
 
-static double GetSystemTimeGfx(void) {
+static inline double GetSystemTimeGfx(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (double)ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
-static bool PointInRectGfx(int px, int py, int rx, int ry, int rw, int rh) {
+static inline bool PointInRectGfx(int px, int py, int rx, int ry, int rw, int rh) {
     return (px >= rx && px <= rx + rw && py >= ry && py <= ry + rh);
 }
 
-/* ✅ ВИПРАВЛЕНО: Заповнений трикутник замість ліній */
+/* Заповнений трикутник для стрілок */
+static void DrawFilledTriangleGfx(int x1, int y1, int x2, int y2, int x3, int y3, uint32_t color) {
+    if (y1 > y2) { int t=y1; y1=y2; y2=t; t=x1; x1=x2; x2=t; }
+    if (y2 > y3) { int t=y2; y2=y3; y3=t; t=x2; x2=x3; x3=t; }
+    if (y1 > y2) { int t=y1; y1=y2; y2=t; t=x1; x1=x2; x2=t; }
+    
+    if (y1 == y3) {
+        int xa = (x1 < x3) ? x1 : x3, xb = (x1 > x3) ? x1 : x3;
+        gfx_set_color_uint32(color);
+        gfx_line(xa, y1, xb, y1);
+        return;
+    }
+    
+    float dx1 = (float)(x2 - x1) / (y2 - y1 + 1);
+    float dx2 = (float)(x3 - x1) / (y3 - y1 + 1);
+    float dx3 = (float)(x3 - x2) / (y3 - y2 + 1);
+    
+    float cx1 = x1, cx2 = x1;
+    for (int y = y1; y <= y2; y++) {
+        int xa = (int)cx1, xb = (int)cx2;
+        if (xa > xb) { int t=xa; xa=xb; xb=t; }
+        gfx_set_color_uint32(color);
+        gfx_line(xa, y, xb, y);
+        cx1 += dx1; cx2 += dx2;
+    }
+    cx1 = x2;
+    for (int y = y2; y <= y3; y++) {
+        int xa = (int)cx1, xb = (int)cx2;
+        if (xa > xb) { int t=xa; xa=xb; xb=t; }
+        gfx_set_color_uint32(color);
+        gfx_line(xa, y, xb, y);
+        cx1 += dx3; cx2 += dx2;
+    }
+}
+
 static void DrawArrowGfx(int cx, int cy, int size, ArrowDirectionGfx dir, uint32_t color) {
     int x1, y1, x2, y2, x3, y3;
-    
     switch(dir) {
         case ARROW_GFX_LEFT:
             x1 = cx + size; y1 = cy - size;
@@ -52,167 +101,260 @@ static void DrawArrowGfx(int cx, int cy, int size, ArrowDirectionGfx dir, uint32
             break;
         default: return;
     }
-    DrawTriangle(x1, y1, x2, y2, x3, y3, color);
+    DrawFilledTriangleGfx(x1, y1, x2, y2, x3, y3, color);
 }
 
-static int MeasureTextGfx(RasterFont font, const char *text, int spacing) {
+static inline int MeasureTextGfx(RasterFont font, const char *text, int spacing) {
     int len = utf8_strlen(text);
     return len * (font.glyph_width + spacing) - spacing;
 }
 
-/* ... (Функції IncrementValueGfx, DecrementValueGfx, NormalizeValueGfx, UpdateValueFromMouseGfx без змін) ... */
+/* ================= ЛОГІКА ЗМІНИ ЗНАЧЕНЬ (зі збереженою інверсією) ================= */
 
-static bool IncrementValueGfx(void *value, void *minVal, void *maxVal, float step, GuiSpinnerGfxValueType type) {
+/**
+ * 🔹 Збільшує значення — зі збереженою логікою інверсії діапазону
+ * ✅ КЛЮЧОВЕ: при min > max "інкремент" = зменшення значення (для сумісності з raylib)
+ */
+static inline bool IncrementValueGfx(void *value, void *minVal, void *maxVal, 
+                                     float step, GuiSpinnerGfxValueType type) {
     bool changed = false;
-    if(type == GUI_SPINNER_GFX_FLOAT) {
-        float *v = (float*)value;
-        float a = *(float*)minVal, b = *(float*)maxVal;
-        bool rev = (a > b);
-        float rMin = fminf(a,b), rMax = fmaxf(a,b);
-        if(!rev) { if(*v + step <= rMax) { *v += step; changed = true; } else if(*v != rMax) { *v = rMax; changed = true; } }
-        else    { if(*v - step >= rMin) { *v -= step; changed = true; } else if(*v != rMin) { *v = rMin; changed = true; } }
-    } else {
-        int *v = (int*)value;
-        int a = *(int*)minVal, b = *(int*)maxVal;
-        bool rev = (a > b);
-        int rMin = (a<b)?a:b, rMax = (a>b)?a:b;
-        int s = (int)(step+0.5f);
-        if(!rev) { if(*v + s <= rMax) { *v += s; changed = true; } else if(*v != rMax) { *v = rMax; changed = true; } }
-        else    { if(*v - s >= rMin) { *v -= s; changed = true; } else if(*v != rMin) { *v = rMin; changed = true; } }
-    }
-    return changed;
-}
-
-static bool DecrementValueGfx(void *value, void *minVal, void *maxVal, float step, GuiSpinnerGfxValueType type) {
-    bool changed = false;
-    if(type == GUI_SPINNER_GFX_FLOAT) {
-        float *v = (float*)value;
-        float a = *(float*)minVal, b = *(float*)maxVal;
-        bool rev = (a > b);
-        float rMin = fminf(a,b), rMax = fmaxf(a,b);
-        if(!rev) { if(*v - step >= rMin) { *v -= step; changed = true; } else if(*v != rMin) { *v = rMin; changed = true; } }
-        else    { if(*v + step <= rMax) { *v += step; changed = true; } else if(*v != rMax) { *v = rMax; changed = true; } }
-    } else {
-        int *v = (int*)value;
-        int a = *(int*)minVal, b = *(int*)maxVal;
-        bool rev = (a > b);
-        int rMin = (a<b)?a:b, rMax = (a>b)?a:b;
-        int s = (int)(step+0.5f);
-        if(!rev) { if(*v - s >= rMin) { *v -= s; changed = true; } else if(*v != rMin) { *v = rMin; changed = true; } }
-        else    { if(*v + s <= rMax) { *v += s; changed = true; } else if(*v != rMax) { *v = rMax; changed = true; } }
-    }
-    return changed;
-}
-
-static float NormalizeValueGfx(void *value, void *minVal, void *maxVal, GuiSpinnerGfxValueType type) {
-    if(type == GUI_SPINNER_GFX_FLOAT) {
-        float v = *(float*)value, a = *(float*)minVal, b = *(float*)maxVal;
-        float rMin = fminf(a,b), rMax = fmaxf(a,b);
-        float n = (rMax==rMin)?0.0f:(v-rMin)/(rMax-rMin);
-        return (a>b)?(1.0f-n):n;
-    } else {
-        int v = *(int*)value, a = *(int*)minVal, b = *(int*)maxVal;
-        int rMin = (a<b)?a:b, rMax = (a>b)?a:b;
-        float n = (rMax==rMin)?0.0f:(float)(v-rMin)/(float)(rMax-rMin);
-        return (a>b)?(1.0f-n):n;
-    }
-}
-
-static void UpdateValueFromMouseGfx(int pos, int minPos, int maxPos, void *value,
-                                     void *minVal, void *maxVal, float step,
-                                     GuiSpinnerGfxValueType type, GuiSpinnerGfxOrientation orient) {
-    float norm = (float)(pos - minPos) / (float)(maxPos - minPos);
-    if(norm < 0) norm = 0; if(norm > 1) norm = 1;
-    if(orient == GUI_SPINNER_GFX_VERTICAL) norm = 1.0f - norm;
     
-    if(type == GUI_SPINNER_GFX_FLOAT) {
+    if (type == GUI_SPINNER_GFX_FLOAT) {
+        float *v = (float*)value;
         float a = *(float*)minVal, b = *(float*)maxVal;
-        float rMin = fminf(a,b), rMax = fmaxf(a,b);
-        if(a > b) norm = 1.0f - norm;
+        bool reversed = (a > b);
+        float realMin = fminf(a, b), realMax = fmaxf(a, b);
+        
+        if (!reversed) {
+            if (*v + step <= realMax) { *v += step; changed = true; }
+            else if (*v != realMax) { *v = realMax; changed = true; }
+        } else {
+            /* Інвертований діапазон: інкремент = віднімання */
+            if (*v - step >= realMin) { *v -= step; changed = true; }
+            else if (*v != realMin) { *v = realMin; changed = true; }
+        }
+    } else {
+        int *v = (int*)value;
+        int a = *(int*)minVal, b = *(int*)maxVal;
+        bool reversed = (a > b);
+        int realMin = (a < b) ? a : b, realMax = (a > b) ? a : b;
+        int stepInt = (int)(step + 0.5f);
+        
+        if (!reversed) {
+            if (*v + stepInt <= realMax) { *v += stepInt; changed = true; }
+            else if (*v != realMax) { *v = realMax; changed = true; }
+        } else {
+            if (*v - stepInt >= realMin) { *v -= stepInt; changed = true; }
+            else if (*v != realMin) { *v = realMin; changed = true; }
+        }
+    }
+    return changed;
+}
+
+/**
+ * 🔹 Зменшує значення — зі збереженою логікою інверсії діапазону
+ */
+static inline bool DecrementValueGfx(void *value, void *minVal, void *maxVal,
+                                     float step, GuiSpinnerGfxValueType type) {
+    bool changed = false;
+    
+    if (type == GUI_SPINNER_GFX_FLOAT) {
+        float *v = (float*)value;
+        float a = *(float*)minVal, b = *(float*)maxVal;
+        bool reversed = (a > b);
+        float realMin = fminf(a, b), realMax = fmaxf(a, b);
+        
+        if (!reversed) {
+            if (*v - step >= realMin) { *v -= step; changed = true; }
+            else if (*v != realMin) { *v = realMin; changed = true; }
+        } else {
+            /* Інвертований діапазон: декремент = додавання */
+            if (*v + step <= realMax) { *v += step; changed = true; }
+            else if (*v != realMax) { *v = realMax; changed = true; }
+        }
+    } else {
+        int *v = (int*)value;
+        int a = *(int*)minVal, b = *(int*)maxVal;
+        bool reversed = (a > b);
+        int realMin = (a < b) ? a : b, realMax = (a > b) ? a : b;
+        int stepInt = (int)(step + 0.5f);
+        
+        if (!reversed) {
+            if (*v - stepInt >= realMin) { *v -= stepInt; changed = true; }
+            else if (*v != realMin) { *v = realMin; changed = true; }
+        } else {
+            if (*v + stepInt <= realMax) { *v += stepInt; changed = true; }
+            else if (*v != realMax) { *v = realMax; changed = true; }
+        }
+    }
+    return changed;
+}
+
+/**
+ * 🔹 Нормалізація значення [0..1] для візуалізації
+ * ✅ ЗБЕРЕЖЕНО: інверсія значення (-*value) для сумісності gfx ↔ raylib
+ */
+static float NormalizeValueGfx(void *value, void *minVal, void *maxVal, 
+                               GuiSpinnerGfxValueType type) {
+    if (type == GUI_SPINNER_GFX_FLOAT) {
+        /* 🔹 ІНВЕРСІЯ ЗНАЧЕННЯ: ключова для сумісності з raylib */
+        float v = - *(float*)value;
+        float a = *(float*)minVal, b = *(float*)maxVal;
+        float rMin = fminf(a, b), rMax = fmaxf(a, b);
+        float norm = (rMax == rMin) ? 0.0f : (v - rMin) / (rMax - rMin);
+        return (a > b) ? (1.0f - norm) : norm;
+    } else {
+        /* 🔹 ІНВЕРСІЯ ЗНАЧЕННЯ: ключова для сумісності з raylib */
+        int v = - *(int*)value;
+        int a = *(int*)minVal, b = *(int*)maxVal;
+        int rMin = (a < b) ? a : b, rMax = (a > b) ? a : b;
+        float norm = (rMax == rMin) ? 0.0f : (float)(v - rMin) / (float)(rMax - rMin);
+        return (a > b) ? (1.0f - norm) : norm;
+    }
+}
+
+/**
+ * 🔹 Оновлення значення з позиції миші
+ * ✅ ЗБЕРЕЖЕНО: інверсія при записі (-stepped) для сумісності gfx ↔ raylib
+ */
+static void UpdateValueFromMouseGfx(int pos, int minPos, int maxPos, void *value,
+                                    void *minVal, void *maxVal, float step,
+                                    GuiSpinnerGfxValueType type, 
+                                    GuiSpinnerGfxOrientation orient) {
+    float norm = (float)(pos - minPos) / (float)(maxPos - minPos);
+    if (norm < 0) norm = 0; if (norm > 1) norm = 1;
+    
+    if (orient == GUI_SPINNER_GFX_VERTICAL) {
+        norm = 1.0f - norm;
+    }
+    
+    if (type == GUI_SPINNER_GFX_FLOAT) {
+        float a = *(float*)minVal, b = *(float*)maxVal;
+        float rMin = fminf(a, b), rMax = fmaxf(a, b);
+        
+        if (a > b) norm = 1.0f - norm;
+        
         float raw = rMin + norm * (rMax - rMin);
         float stepped = rMin + step * roundf((raw - rMin) / step);
-        if(stepped < rMin) stepped = rMin; if(stepped > rMax) stepped = rMax;
-        *(float*)value = stepped;
+        if (stepped < rMin) stepped = rMin;
+        if (stepped > rMax) stepped = rMax;
+        
+        /* 🔹 ІНВЕРСІЯ ПРИ ЗАПИСУ: ключова для сумісності з raylib */
+        *(float*)value = -stepped;
+        
     } else {
         int a = *(int*)minVal, b = *(int*)maxVal;
-        int rMin = (a<b)?a:b, rMax = (a>b)?a:b;
-        if(a > b) norm = 1.0f - norm;
+        int rMin = (a < b) ? a : b, rMax = (a > b) ? a : b;
+        if (a > b) norm = 1.0f - norm;
+        
         int raw = rMin + (int)(norm * (rMax - rMin));
-        int s = (int)(step+0.5f); if(s==0) s=1;
+        int s = (int)(step + 0.5f); if (s == 0) s = 1;
         int stepped = rMin + ((raw - rMin + s/2) / s) * s;
-        if(stepped < rMin) stepped = rMin; if(stepped > rMax) stepped = rMax;
-        *(int*)value = stepped;
+        if (stepped < rMin) stepped = rMin;
+        if (stepped > rMax) stepped = rMax;
+        
+        /* 🔹 ІНВЕРСІЯ ПРИ ЗАПИСУ: ключова для сумісності з raylib */
+        *(int*)value = -stepped;
     }
 }
+
+/* ================= КНОПКА-СТРІЛКА З АВТОПОВТОРОМ ================= */
 
 static bool ArrowButtonGfx(int x, int y, int w, int h, ArrowDirectionGfx dir,
                            void *value, void *minVal, void *maxVal, float step,
                            GuiSpinnerGfxValueType type, HoldStateGfx *hold,
                            uint32_t baseColor, GuiSpinnerGfxOrientation orient) {
+    
     int mx = gfx_get_mouse_x(), my = gfx_get_mouse_y();
     bool over = PointInRectGfx(mx, my, x, y, w, h);
     bool changed = false;
     
     uint32_t btnColor = baseColor;
-    if(over) btnColor = 0xD0D0D0;
-    if(over && gfx_is_mouse_down(GFX_MOUSE_LEFT)) btnColor = 0xA0A0A0;
+    if (over) btnColor = ColorBrighten(baseColor, 1.15f);
+    if (over && gfx_is_mouse_down(GFX_MOUSE_LEFT)) 
+        btnColor = ColorBrighten(baseColor, 0.85f);
     
     DrawRectangleFast(x, y, w, h, btnColor);
-    DrawRectangleLines(x, y, w, h, GetContrastColor(btnColor));
+    DrawRectangleLinesFast(x, y, w, h, GetContrastColor(btnColor));
     
     ArrowDirectionGfx drawDir = dir;
-    if(orient == GUI_SPINNER_GFX_VERTICAL) {
-        if(dir == ARROW_GFX_LEFT) drawDir = ARROW_GFX_UP;
-        else if(dir == ARROW_GFX_RIGHT) drawDir = ARROW_GFX_DOWN;
+    if (orient == GUI_SPINNER_GFX_VERTICAL) {
+        if (dir == ARROW_GFX_LEFT) drawDir = ARROW_GFX_UP;
+        else if (dir == ARROW_GFX_RIGHT) drawDir = ARROW_GFX_DOWN;
     }
     DrawArrowGfx(x + w/2, y + h/2, w/3, drawDir, GetContrastInvertColor(btnColor));
     
     double now = GetSystemTimeGfx();
-    if(!hold->isHeld) { hold->lastUpdateTime = now; hold->accumulatedTime = 0; }
+    if (!hold->isHeld) { hold->lastUpdateTime = now; hold->accumulatedTime = 0; }
     double dt = now - hold->lastUpdateTime;
     hold->lastUpdateTime = now;
     
     bool pressed = over && gfx_is_mouse_pressed(GFX_MOUSE_LEFT);
     bool down = over && gfx_is_mouse_down(GFX_MOUSE_LEFT);
-    bool inc = (dir == ARROW_GFX_UP || dir == ARROW_GFX_RIGHT);
+    bool incAction = (dir == ARROW_GFX_UP || dir == ARROW_GFX_RIGHT);
     
-    const double delay = 0.175, baseInt = 0.25, minInt = 0.005, accel = 0.075;
-    
-    if(pressed) {
+    if (pressed) {
         hold->isHeld = true; hold->holdStartTime = now; hold->accumulatedTime = 0;
-        changed = inc ? IncrementValueGfx(value, minVal, maxVal, step, type)
-                      : DecrementValueGfx(value, minVal, maxVal, step, type);
-    } else if(down && hold->isHeld) {
+        /* 🔹 ЗБЕРЕЖЕНО: swapped calls для сумісності gfx ↔ raylib */
+        changed = incAction ? DecrementValueGfx(value, minVal, maxVal, step, type)
+                           : IncrementValueGfx(value, minVal, maxVal, step, type);
+    }
+    else if (down && hold->isHeld) {
         double dur = now - hold->holdStartTime;
-        double interval = (dur > delay) ? fmaxf(minInt, baseInt - (dur-delay)*accel) : baseInt;
+        double interval = (dur > AUTO_REPEAT_DELAY_SEC) 
+                        ? fmaxf(AUTO_REPEAT_MIN_SEC, 
+                               AUTO_REPEAT_BASE_SEC - (dur-AUTO_REPEAT_DELAY_SEC)*AUTO_REPEAT_ACCEL) 
+                        : AUTO_REPEAT_BASE_SEC;
         hold->accumulatedTime += dt;
-        while(hold->accumulatedTime >= interval) {
+        while (hold->accumulatedTime >= interval) {
             hold->accumulatedTime -= interval;
-            changed = (inc ? IncrementValueGfx(value, minVal, maxVal, step, type)
-                          : DecrementValueGfx(value, minVal, maxVal, step, type)) || changed;
+            changed = (incAction ? DecrementValueGfx(value, minVal, maxVal, step, type)
+                                : IncrementValueGfx(value, minVal, maxVal, step, type)) || changed;
         }
-    } else { hold->isHeld = false; hold->accumulatedTime = 0; }
+    }
+    else { hold->isHeld = false; hold->accumulatedTime = 0; }
     
     return changed;
 }
 
-static void DrawSliderGfx(int x, int y, int w, int h, float norm, uint32_t color, GuiSpinnerGfxOrientation orient) {
-    DrawRectangleFast(x, y, w, h, 0xE0E0E0);
-    
-    if(orient == GUI_SPINNER_GFX_HORIZONTAL) {
+/* ================= МАЛЮВАННЯ СЛАЙДЕРА ================= */
+
+static void DrawSliderGfx(int x, int y, int w, int h, float norm,
+                          uint32_t color, GuiSpinnerGfxOrientation orient) {
+
+    /* 🔹 ІМІТАЦІЯ FADE: множник 0.4 для напівпрозорого фону */
+    const uint32_t TRACK_BG = ColorBrighten(color, 0.70f);  /* Фон треку = baseColor × 0.7 */
+    const uint32_t TRACK_FILL = ColorBrighten(color, 0.90f); /* Заповнення = яскравіше */
+
+    const uint32_t KNOB_COLOR = GetContrastInvertColor(color);
+    const uint32_t BORDER_COLOR = GetContrastColor(color);
+
+    /* Малюємо фон треку */
+    DrawRectangleFast(x, y, w, h, TRACK_BG);
+
+    if (orient == GUI_SPINNER_GFX_HORIZONTAL) {
+        /* Горизонтальний: заповнення зліва направо */
         int fillW = (int)(norm * w);
-        DrawRectangleFast(x, y, fillW, h, 0xC0C0C0);
-        int knobX = x + fillW - 5;
-        DrawRectangleFast(knobX, y+2, 10, h-4, GetContrastInvertColor(color));
-        DrawRectangleLines(knobX, y+2, 10, h-4, GetContrastColor(color));
+        DrawRectangleFast(x, y, fillW, h, TRACK_FILL);
+
+        /* Ручка */
+        int knobX = x + fillW - SLIDER_KNOB_OFFSET;
+        DrawRectangleFast(knobX, y+2, SLIDER_KNOB_SIZE, h-4, KNOB_COLOR);
+        DrawRectangleLinesFast(knobX, y+2, SLIDER_KNOB_SIZE, h-4, BORDER_COLOR);
+
     } else {
+        /* Вертикальний: заповнення знизу вгору */
         int fillH = (int)(norm * h);
-        DrawRectangleFast(x, y+h-fillH, w, fillH, 0xC0C0C0);
-        int knobY = y + h - fillH - 5;
-        DrawRectangleFast(x+2, knobY, w-4, 10, GetContrastInvertColor(color));
-        DrawRectangleLines(x+2, knobY, w-4, 10, GetContrastColor(color));
+        DrawRectangleFast(x, y + h - fillH, w, fillH, TRACK_FILL);
+
+        /* Ручка */
+        int knobY = y + h - fillH - SLIDER_KNOB_OFFSET;
+        DrawRectangleFast(x+2, knobY, w-4, SLIDER_KNOB_SIZE, GetContrastInvertColor(color));
+        DrawRectangleLinesFast(x+2, knobY, w-4, SLIDER_KNOB_SIZE, BORDER_COLOR);
     }
-    DrawRectangleLines(x, y, w, h, GetContrastColor(color));
+
+    /* Рамка треку */
+    DrawRectangleLinesFast(x, y, w, h, BORDER_COLOR);
 }
 
 /* ================= ОСНОВНА ФУНКЦІЯ ВІДЖЕТА ================= */
@@ -224,7 +366,8 @@ int Gui_SliderSpinner_GFX(int id, int centerX, int centerY, int width, int heigh
                           GuiSpinnerGfxOrientation orientation,
                           uint32_t baseColor, RasterFont font, int spacing,
                           bool showButtons) {
-    if(id < 0 || id >= MAX_SPINNERS_GFX || !value) return 0;
+    
+    if (id < 0 || id >= MAX_SPINNERS_GFX || !value) return 0;
     
     HoldStateGfx *holdL = &holdLeftStates[id], *holdR = &holdRightStates[id];
     bool changed = false;
@@ -236,7 +379,7 @@ int Gui_SliderSpinner_GFX(int id, int centerX, int centerY, int width, int heigh
     int posX = centerX - width/2, posY = centerY - height/2;
     
     int lx, ly, rx, ry, sx, sy;
-    if(orientation == GUI_SPINNER_GFX_HORIZONTAL) {
+    if (orientation == GUI_SPINNER_GFX_HORIZONTAL) {
         lx = posX; ly = posY;
         rx = posX + width - btnSize; ry = posY;
         sx = posX + btnSize; sy = posY;
@@ -246,15 +389,21 @@ int Gui_SliderSpinner_GFX(int id, int centerX, int centerY, int width, int heigh
         sx = posX; sy = posY + btnSize;
     }
     
-    if(showButtons) {
-        if(ArrowButtonGfx(lx, ly, btnSize, (orientation==GUI_SPINNER_GFX_HORIZONTAL)?height:btnSize,
-                         (orientation==GUI_SPINNER_GFX_HORIZONTAL)?ARROW_GFX_LEFT:ARROW_GFX_DOWN,
-                         value, minValue, maxValue, step, valueType, holdL, baseColor, orientation))
+    if (showButtons) {
+        if (ArrowButtonGfx(lx, ly, btnSize, 
+                          (orientation==GUI_SPINNER_GFX_HORIZONTAL)?height:btnSize,
+                          (orientation==GUI_SPINNER_GFX_HORIZONTAL)?ARROW_GFX_LEFT:ARROW_GFX_DOWN,
+                          value, minValue, maxValue, step, valueType, 
+                          holdL, baseColor, orientation)) {
             changed = true;
-        if(ArrowButtonGfx(rx, ry, btnSize, (orientation==GUI_SPINNER_GFX_HORIZONTAL)?height:btnSize,
-                         (orientation==GUI_SPINNER_GFX_HORIZONTAL)?ARROW_GFX_RIGHT:ARROW_GFX_UP,
-                         value, minValue, maxValue, step, valueType, holdR, baseColor, orientation))
+        }
+        if (ArrowButtonGfx(rx, ry, btnSize,
+                          (orientation==GUI_SPINNER_GFX_HORIZONTAL)?height:btnSize,
+                          (orientation==GUI_SPINNER_GFX_HORIZONTAL)?ARROW_GFX_RIGHT:ARROW_GFX_UP,
+                          value, minValue, maxValue, step, valueType,
+                          holdR, baseColor, orientation)) {
             changed = true;
+        }
     }
     
     float norm = NormalizeValueGfx(value, minValue, maxValue, valueType);
@@ -263,79 +412,83 @@ int Gui_SliderSpinner_GFX(int id, int centerX, int centerY, int width, int heigh
     int mx = gfx_get_mouse_x(), my = gfx_get_mouse_y();
     bool sliderOver = PointInRectGfx(mx, my, sx, sy, sliderW, sliderH);
     
-    if(sliderOver) {
+    if (sliderOver) {
         int wheel = gfx_get_mouse_wheel();
-        if(wheel != 0) {
+        if (wheel != 0) {
             float delta = step * wheel;
-            if(valueType == GUI_SPINNER_GFX_FLOAT) {
+            
+            if (valueType == GUI_SPINNER_GFX_FLOAT) {
                 float *v = (float*)value;
                 float a = *(float*)minValue, b = *(float*)maxValue;
                 bool rev = (a > b);
                 float rMin = fminf(a,b), rMax = fmaxf(a,b);
-                *v += rev ? -delta : delta;
-                if(*v < rMin) *v = rMin; if(*v > rMax) *v = rMax;
+                
+                /* 🔹 ЗБЕРЕЖЕНО: інвертована логіка колеса для сумісності з raylib */
+                *v += rev ? delta : -delta;
+                if (*v < rMin) *v = rMin; if (*v > rMax) *v = rMax;
+                
             } else {
                 int *v = (int*)value;
                 int a = *(int*)minValue, b = *(int*)maxValue;
                 bool rev = (a > b);
                 int rMin = (a<b)?a:b, rMax = (a>b)?a:b;
                 int s = (int)(step+0.5f);
-                *v += rev ? -s*wheel : s*wheel;
-                if(*v < rMin) *v = rMin; if(*v > rMax) *v = rMax;
+                
+                *v += rev ? s*wheel : -s*wheel;
+                if (*v < rMin) *v = rMin; if (*v > rMax) *v = rMax;
             }
             changed = true;
         }
     }
     
-    if(gfx_is_mouse_pressed(GFX_MOUSE_LEFT) && sliderOver) widgetActive[id] = true;
-    if(gfx_is_mouse_released(GFX_MOUSE_LEFT)) widgetActive[id] = false;
+    if (gfx_is_mouse_pressed(GFX_MOUSE_LEFT) && sliderOver) 
+        widgetActive[id] = true;
+    if (gfx_is_mouse_released(GFX_MOUSE_LEFT)) 
+        widgetActive[id] = false;
     
-    if(widgetActive[id]) {
-        if(orientation == GUI_SPINNER_GFX_HORIZONTAL)
-            UpdateValueFromMouseGfx(mx, sx, sx+sliderW, value, minValue, maxValue, step, valueType, orientation);
-        else
-            UpdateValueFromMouseGfx(my, sy, sy+sliderH, value, minValue, maxValue, step, valueType, orientation);
+    if (widgetActive[id]) {
+        if (orientation == GUI_SPINNER_GFX_HORIZONTAL) {
+            UpdateValueFromMouseGfx(mx, sx, sx+sliderW, value, 
+                                   minValue, maxValue, step, valueType, orientation);
+        } else {
+            UpdateValueFromMouseGfx(my, sy, sy+sliderH, value, 
+                                   minValue, maxValue, step, valueType, orientation);
+        }
         changed = true;
     }
     
     if (showButtons) {
-        if (orientation == GUI_SPINNER_GFX_HORIZONTAL) {
-            if (textRight && textRight[0]) {
-                int tw = MeasureTextGfx(font, textRight, spacing);
-                int tx = rx + btnSize/2 - tw/2;
-                int ty = ry - font.glyph_height - 8;
-                DrawTextWithAutoInvertedBackground(font, tx, ty, textRight, spacing, 1, baseColor, 4, 1);
-            }
-            if (textLeft && textLeft[0]) {
-                int tw = MeasureTextGfx(font, textLeft, spacing);
-                int tx = lx + btnSize/2 - tw/2;
-                int ty = ly - font.glyph_height - 8;
-                DrawTextWithAutoInvertedBackground(font, tx, ty, textLeft, spacing, 1, baseColor, 4, 1);
-            }
-        } else {
-            if (textLeft && textLeft[0]) {
-                int tw = MeasureTextGfx(font, textLeft, spacing);
-                int tx = posX + width/2 - tw/2;
-                int ty = posY - font.glyph_height - 8;
-                DrawTextWithAutoInvertedBackground(font, tx, ty, textLeft, spacing, 1, baseColor, 4, 1);
-            }
-            if (textRight && textRight[0]) {
-                int tw = MeasureTextGfx(font, textRight, spacing);
-                int tx = posX + width/2 - tw/2;
-                int ty = ly + btnSize + 8;
-                DrawTextWithAutoInvertedBackground(font, tx, ty, textRight, spacing, 1, baseColor, 4, 1);
-            }
+        if (textRight && textRight[0]) {
+            int tw = MeasureTextGfx(font, textRight, spacing);
+            int tx = rx + btnSize/2 - tw/2;
+            int ty = ry - font.glyph_height - 8;
+            DrawTextWithAutoInvertedBackground(font, tx, ty, textRight, 
+                                              spacing, 1, baseColor, 
+                                              TEXT_PADDING, TEXT_BORDER_THICKNESS);
+        }
+        if (textLeft && textLeft[0]) {
+            int tw = MeasureTextGfx(font, textLeft, spacing);
+            int tx = lx + btnSize/2 - tw/2;
+            int ty = ly - font.glyph_height - 8;
+            DrawTextWithAutoInvertedBackground(font, tx, ty, textLeft, 
+                                              spacing, 1, baseColor,
+                                              TEXT_PADDING, TEXT_BORDER_THICKNESS);
         }
     }
     
     char valStr[32];
-    if(valueType == GUI_SPINNER_GFX_FLOAT) snprintf(valStr, sizeof(valStr), "%.2f", *(float*)value);
-    else snprintf(valStr, sizeof(valStr), "%d", *(int*)value);
+    if (valueType == GUI_SPINNER_GFX_FLOAT) 
+        snprintf(valStr, sizeof(valStr), "%.2f", *(float*)value);
+    else 
+        snprintf(valStr, sizeof(valStr), "%d", *(int*)value);
     
     int tw = MeasureTextGfx(font, valStr, spacing);
     int tx = sx + sliderW/2 - tw/2;
     int ty = sy + sliderH/2 - font.glyph_height/2;
-    DrawTextWithAutoInvertedBackground(font, tx, ty, valStr, spacing, 1, baseColor, 4, 1);
+    
+    DrawTextWithAutoInvertedBackground(font, tx, ty, valStr, 
+                                      spacing, 1, baseColor,
+                                      TEXT_PADDING, TEXT_BORDER_THICKNESS);
     
     return changed ? 1 : 0;
 }
