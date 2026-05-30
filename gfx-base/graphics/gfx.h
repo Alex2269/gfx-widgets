@@ -10,7 +10,17 @@ Version 2, 9/23/2011 - Fixes a bug that could result in jerky animation.
 #ifndef GFX_H
 #define GFX_H
 
+/* ================= MODULES ================= */
+#include "bezier.h"
+#include "circles.h"
+#include "ellipses.h"
+#include "lines.h"
+#include "polygons.h"
+#include "rects.h"
+#include "rounded_rect.h"
+#include "triangles.h"
 #include <stdint.h>
+#include <stddef.h>
 
 /* --- Mouse button constants (raylib-style) --- */
 #define GFX_MOUSE_LEFT  1
