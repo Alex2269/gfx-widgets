@@ -92,7 +92,7 @@ static bool _ProcessButtons(int x, int y, int w, int h, ArrowDirectionGfx dir,
 
     uint32_t btnColor = baseColor;
     if (over) btnColor = ColorBrighten(baseColor, 0.95f);
-    if (over && gfx_is_mouse_down(GFX_MOUSE_LEFT)) btnColor = ColorBrighten(baseColor, 0.50f);
+    if (over && gfx_is_mouse_down(GFX_MOUSE_LEFT)) btnColor = ColorBrighten(baseColor, 0.75f);
 
     DrawRectangleFast(x, y, w, h, btnColor);
     DrawRectangleLinesFast(x, y, w, h, GetContrastColor(btnColor));
