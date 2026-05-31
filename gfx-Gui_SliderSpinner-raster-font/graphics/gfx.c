@@ -4,17 +4,8 @@ This work is licensed under a Creative Commons Attribution 4.0 International Lic
 https://creativecommons.org/licenses/by/4.0/
 */
 
-// CFLAGS += -D _POSIX_C_SOURCE=199309L # ця дефініція додана в makefile
-#define _POSIX_C_SOURCE 199309L  // ⚠️ Обов'язково ПЕРЕД будь-якими #include!
 #include "gfx.h"                 // ✅ Спочатку свій хедер (перевірка сигнатур)
-#include "color_utils.h"         // ✅ Якщо потрібен лише для внутрішньої логіки
-#include <time.h>                // ✅ Для clock_gettime
-#include <X11/Xlib.h>
-#include <X11/Xutil.h>
-#include <unistd.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
+
 
 double GetTimeGfx(void) {
     struct timespec ts;

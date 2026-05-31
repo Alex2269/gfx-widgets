@@ -2,8 +2,7 @@
 gui_slider_spinner_gfx.c
 Адаптація Gui_SliderSpinner для X11/gfx
 ✅ Скалярний API: minVal/maxVal передаються як double, без union/void*
-✅ Використовує DrawTriangle з graphics.h (без дублювання коду)
-✅ Логіка інверсій збережена для сумісності з raylib-версією
+✅ Логіка інверсій та автоповтору збережена
 */
 
 #include "gui_slider_spinner_gfx.h"
@@ -33,34 +32,35 @@ static inline bool PointInRectGfx(int px, int py, int rx, int ry, int rw, int rh
     return (px >= rx && px <= rx + rw && py >= ry && py <= ry + rh);
 }
 
-static inline int MeasureTextGfx(RasterFont font, const char *text, int spacing) {
+static int MeasureTextGfx(RasterFont font, const char *text, int spacing) {
     int len = utf8_strlen(text);
     return len * (font.glyph_width + spacing) - spacing;
 }
 
-/* 🔹 Хелпер: безпечне отримання realMin/realMax та прапорця інверсії з double */
+/* 🔹 Хелпер: отримати realMin/realMax з double-параметрів */
 static inline void _GetRange(double minVal, double maxVal, double *rMin, double *rMax, bool *rev) {
     *rev = (minVal > maxVal);
     *rMin = fmin(minVal, maxVal);
     *rMax = fmax(minVal, maxVal);
 }
 
-/* ================= ЛОГІКА ЗМІНИ ЗНАЧЕНЬ (зі збереженою інверсією) ================= */
+/* ================= ЛОГІКА ЗМІНИ ЗНАЧЕНЬ (скалярний API) ================= */
 
 static inline bool IncrementValueGfx(void *value, double minVal, double maxVal,
                                      float step, GuiSpinnerGfxValueType type) {
     bool changed = false;
-    double rMin, rMax; bool rev;
+    double rMin, rMax;
+    bool rev;
     _GetRange(minVal, maxVal, &rMin, &rMax, &rev);
     
     if (type == GUI_SPINNER_GFX_FLOAT) {
         float *v = (float*)value;
         if (!rev) {
             if (*v + step <= rMax) { *v += step; changed = true; }
-            else if (*v != (float)rMax) { *v = (float)rMax; changed = true; }
+            else if (*v != rMax) { *v = (float)rMax; changed = true; }
         } else {
             if (*v - step >= rMin) { *v -= step; changed = true; }
-            else if (*v != (float)rMin) { *v = (float)rMin; changed = true; }
+            else if (*v != rMin) { *v = (float)rMin; changed = true; }
         }
     } else {
         int *v = (int*)value;
@@ -87,10 +87,10 @@ static inline bool DecrementValueGfx(void *value, double minVal, double maxVal,
         float *v = (float*)value;
         if (!rev) {
             if (*v - step >= rMin) { *v -= step; changed = true; }
-            else if (*v != (float)rMin) { *v = (float)rMin; changed = true; }
+            else if (*v != rMin) { *v = (float)rMin; changed = true; }
         } else {
             if (*v + step <= rMax) { *v += step; changed = true; }
-            else if (*v != (float)rMax) { *v = (float)rMax; changed = true; }
+            else if (*v != rMax) { *v = (float)rMax; changed = true; }
         }
     } else {
         int *v = (int*)value;
@@ -106,32 +106,23 @@ static inline bool DecrementValueGfx(void *value, double minVal, double maxVal,
     return changed;
 }
 
-/**
- * 🔹 Нормалізація значення [0..1] для візуалізації
- * ✅ ЗБЕРЕЖЕНО: інверсія значення (-*value) для сумісності gfx ↔ raylib
- */
 static float NormalizeValueGfx(void *value, double minVal, double maxVal,
                                GuiSpinnerGfxValueType type) {
-    double rMin, rMax; bool rev;
+    double rMin, rMax;
+    bool rev;
     _GetRange(minVal, maxVal, &rMin, &rMax, &rev);
     
     if (type == GUI_SPINNER_GFX_FLOAT) {
-        /* 🔹 ІНВЕРСІЯ ЗНАЧЕННЯ: ключова для сумісності з raylib */
-        float v = - *(float*)value;
+        float v = *(float*)value;
         float norm = (rMax == rMin) ? 0.0f : (float)((v - rMin) / (rMax - rMin));
         return rev ? (1.0f - norm) : norm;
     } else {
-        /* 🔹 ІНВЕРСІЯ ЗНАЧЕННЯ: ключова для сумісності з raylib */
-        int v = - *(int*)value;
+        int v = *(int*)value;
         float norm = (rMax == rMin) ? 0.0f : (float)(v - rMin) / (float)(rMax - rMin);
         return rev ? (1.0f - norm) : norm;
     }
 }
 
-/**
- * 🔹 Оновлення значення з позиції миші
- * ✅ ЗБЕРЕЖЕНО: інверсія при записі (-stepped) для сумісності gfx ↔ raylib
- */
 static void UpdateValueFromMouseGfx(int pos, int minPos, int maxPos, void *value,
                                     double minVal, double maxVal, float step,
                                     GuiSpinnerGfxValueType type, GuiSpinnerGfxOrientation orient) {
@@ -141,7 +132,8 @@ static void UpdateValueFromMouseGfx(int pos, int minPos, int maxPos, void *value
     
     if (orient == GUI_SPINNER_GFX_VERTICAL) norm = 1.0f - norm;
     
-    double rMin, rMax; bool rev;
+    double rMin, rMax;
+    bool rev;
     _GetRange(minVal, maxVal, &rMin, &rMax, &rev);
     if (rev) norm = 1.0f - norm;
     
@@ -150,18 +142,14 @@ static void UpdateValueFromMouseGfx(int pos, int minPos, int maxPos, void *value
         float stepped = (float)rMin + step * roundf((raw - (float)rMin) / step);
         if (stepped < rMin) stepped = (float)rMin;
         if (stepped > rMax) stepped = (float)rMax;
-        
-        /* 🔹 ІНВЕРСІЯ ПРИ ЗАПИСУ: ключова для сумісності з raylib */
-        *(float*)value = -stepped;
+        *(float*)value = stepped;
     } else {
         int raw = (int)rMin + (int)(norm * (rMax - rMin));
         int s = (int)(step + 0.5f); if (s == 0) s = 1;
         int stepped = (int)rMin + ((raw - (int)rMin + s/2) / s) * s;
         if (stepped < (int)rMin) stepped = (int)rMin;
         if (stepped > (int)rMax) stepped = (int)rMax;
-        
-        /* 🔹 ІНВЕРСІЯ ПРИ ЗАПИСУ: ключова для сумісності з raylib */
-        *(int*)value = -stepped;
+        *(int*)value = stepped;
     }
 }
 

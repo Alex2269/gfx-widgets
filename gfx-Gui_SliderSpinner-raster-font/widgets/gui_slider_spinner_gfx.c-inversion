@@ -1,16 +1,12 @@
 /*
 gui_slider_spinner_gfx.c
 Адаптація Gui_SliderSpinner для X11/gfx
-✅ Використовує примітиви з graphics.h (DrawTriangle, DrawRectangleFast тощо)
-✅ Використовує GetTimeGfx() з gfx.h замість власного clock_gettime
+✅ Скалярний API: minVal/maxVal передаються як double, без union/void*
 ✅ Логіка інверсій та автоповтору збережена
 */
 
 #include "gui_slider_spinner_gfx.h"
-#include "color_utils.h"
-#include "graphics.h"  // 🔹 DrawTriangle, DrawRectangleFast, DrawRectangleLinesFast
-#include "gfx.h"       // 🔹 GetTimeGfx(), gfx_get_mouse_*
-#include "glyphs.h"    // 🔹 utf8_strlen
+#include "gfx.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -41,117 +37,118 @@ static int MeasureTextGfx(RasterFont font, const char *text, int spacing) {
     return len * (font.glyph_width + spacing) - spacing;
 }
 
-/* ================= ЛОГІКА ЗМІНИ ЗНАЧЕНЬ ================= */
+/* 🔹 Хелпер: отримати realMin/realMax з double-параметрів */
+static inline void _GetRange(double minVal, double maxVal, double *rMin, double *rMax, bool *rev) {
+    *rev = (minVal > maxVal);
+    *rMin = fmin(minVal, maxVal);
+    *rMax = fmax(minVal, maxVal);
+}
 
-static inline bool IncrementValueGfx(void *value, void *minVal, void *maxVal, 
+/* ================= ЛОГІКА ЗМІНИ ЗНАЧЕНЬ (скалярний API) ================= */
+
+static inline bool IncrementValueGfx(void *value, double minVal, double maxVal,
                                      float step, GuiSpinnerGfxValueType type) {
     bool changed = false;
+    double rMin, rMax;
+    bool rev;
+    _GetRange(minVal, maxVal, &rMin, &rMax, &rev);
+    
     if (type == GUI_SPINNER_GFX_FLOAT) {
         float *v = (float*)value;
-        float a = *(float*)minVal, b = *(float*)maxVal;
-        bool rev = (a > b);
-        float rMin = fminf(a,b), rMax = fmaxf(a,b);
         if (!rev) {
             if (*v + step <= rMax) { *v += step; changed = true; }
-            else if (*v != rMax) { *v = rMax; changed = true; }
+            else if (*v != rMax) { *v = (float)rMax; changed = true; }
         } else {
             if (*v - step >= rMin) { *v -= step; changed = true; }
-            else if (*v != rMin) { *v = rMin; changed = true; }
+            else if (*v != rMin) { *v = (float)rMin; changed = true; }
         }
     } else {
         int *v = (int*)value;
-        int a = *(int*)minVal, b = *(int*)maxVal;
-        bool rev = (a > b);
-        int rMin = (a<b)?a:b, rMax = (a>b)?a:b;
         int s = (int)(step + 0.5f);
         if (!rev) {
-            if (*v + s <= rMax) { *v += s; changed = true; }
-            else if (*v != rMax) { *v = rMax; changed = true; }
+            if (*v + s <= (int)rMax) { *v += s; changed = true; }
+            else if (*v != (int)rMax) { *v = (int)rMax; changed = true; }
         } else {
-            if (*v - s >= rMin) { *v -= s; changed = true; }
-            else if (*v != rMin) { *v = rMin; changed = true; }
+            if (*v - s >= (int)rMin) { *v -= s; changed = true; }
+            else if (*v != (int)rMin) { *v = (int)rMin; changed = true; }
         }
     }
     return changed;
 }
 
-static inline bool DecrementValueGfx(void *value, void *minVal, void *maxVal,
+static inline bool DecrementValueGfx(void *value, double minVal, double maxVal,
                                      float step, GuiSpinnerGfxValueType type) {
     bool changed = false;
+    double rMin, rMax;
+    bool rev;
+    _GetRange(minVal, maxVal, &rMin, &rMax, &rev);
+    
     if (type == GUI_SPINNER_GFX_FLOAT) {
         float *v = (float*)value;
-        float a = *(float*)minVal, b = *(float*)maxVal;
-        bool rev = (a > b);
-        float rMin = fminf(a,b), rMax = fmaxf(a,b);
         if (!rev) {
             if (*v - step >= rMin) { *v -= step; changed = true; }
-            else if (*v != rMin) { *v = rMin; changed = true; }
+            else if (*v != rMin) { *v = (float)rMin; changed = true; }
         } else {
             if (*v + step <= rMax) { *v += step; changed = true; }
-            else if (*v != rMax) { *v = rMax; changed = true; }
+            else if (*v != rMax) { *v = (float)rMax; changed = true; }
         }
     } else {
         int *v = (int*)value;
-        int a = *(int*)minVal, b = *(int*)maxVal;
-        bool rev = (a > b);
-        int rMin = (a<b)?a:b, rMax = (a>b)?a:b;
         int s = (int)(step + 0.5f);
         if (!rev) {
-            if (*v - s >= rMin) { *v -= s; changed = true; }
-            else if (*v != rMin) { *v = rMin; changed = true; }
+            if (*v - s >= (int)rMin) { *v -= s; changed = true; }
+            else if (*v != (int)rMin) { *v = (int)rMin; changed = true; }
         } else {
-            if (*v + s <= rMax) { *v += s; changed = true; }
-            else if (*v != rMax) { *v = rMax; changed = true; }
+            if (*v + s <= (int)rMax) { *v += s; changed = true; }
+            else if (*v != (int)rMax) { *v = (int)rMax; changed = true; }
         }
     }
     return changed;
 }
 
-static float NormalizeValueGfx(void *value, void *minVal, void *maxVal, 
+static float NormalizeValueGfx(void *value, double minVal, double maxVal,
                                GuiSpinnerGfxValueType type) {
+    double rMin, rMax;
+    bool rev;
+    _GetRange(minVal, maxVal, &rMin, &rMax, &rev);
+    
     if (type == GUI_SPINNER_GFX_FLOAT) {
-        float v = *(float*)value, a = *(float*)minVal, b = *(float*)maxVal;
-        float rMin = fminf(a, b), rMax = fmaxf(a, b);
-        float norm = (rMax == rMin) ? 0.0f : (v - rMin) / (rMax - rMin);
-        return (a > b) ? (1.0f - norm) : norm;
+        float v = *(float*)value;
+        float norm = (rMax == rMin) ? 0.0f : (float)((v - rMin) / (rMax - rMin));
+        return rev ? (1.0f - norm) : norm;
     } else {
-        int v = *(int*)value, a = *(int*)minVal, b = *(int*)maxVal;
-        int rMin = (a < b) ? a : b, rMax = (a > b) ? a : b;
+        int v = *(int*)value;
         float norm = (rMax == rMin) ? 0.0f : (float)(v - rMin) / (float)(rMax - rMin);
-        return (a > b) ? (1.0f - norm) : norm;
+        return rev ? (1.0f - norm) : norm;
     }
 }
 
 static void UpdateValueFromMouseGfx(int pos, int minPos, int maxPos, void *value,
-                                    void *minVal, void *maxVal, float step,
-                                    GuiSpinnerGfxValueType type, 
-                                    GuiSpinnerGfxOrientation orient) {
+                                    double minVal, double maxVal, float step,
+                                    GuiSpinnerGfxValueType type, GuiSpinnerGfxOrientation orient) {
     if (maxPos == minPos) return;
     float norm = (float)(pos - minPos) / (float)(maxPos - minPos);
     if (norm < 0) norm = 0; if (norm > 1) norm = 1;
     
     if (orient == GUI_SPINNER_GFX_VERTICAL) norm = 1.0f - norm;
     
+    double rMin, rMax;
+    bool rev;
+    _GetRange(minVal, maxVal, &rMin, &rMax, &rev);
+    if (rev) norm = 1.0f - norm;
+    
     if (type == GUI_SPINNER_GFX_FLOAT) {
-        float a = *(float*)minVal, b = *(float*)maxVal;
-        float rMin = fminf(a, b), rMax = fmaxf(a, b);
-        if (a > b) norm = 1.0f - norm;
-        
-        float raw = rMin + norm * (rMax - rMin);
-        float stepped = rMin + step * roundf((raw - rMin) / step);
-        if (stepped < rMin) stepped = rMin;
-        if (stepped > rMax) stepped = rMax;
+        float raw = (float)rMin + norm * (float)(rMax - rMin);
+        float stepped = (float)rMin + step * roundf((raw - (float)rMin) / step);
+        if (stepped < rMin) stepped = (float)rMin;
+        if (stepped > rMax) stepped = (float)rMax;
         *(float*)value = stepped;
     } else {
-        int a = *(int*)minVal, b = *(int*)maxVal;
-        int rMin = (a < b) ? a : b, rMax = (a > b) ? a : b;
-        if (a > b) norm = 1.0f - norm;
-        
-        int raw = rMin + (int)(norm * (rMax - rMin));
+        int raw = (int)rMin + (int)(norm * (rMax - rMin));
         int s = (int)(step + 0.5f); if (s == 0) s = 1;
-        int stepped = rMin + ((raw - rMin + s/2) / s) * s;
-        if (stepped < rMin) stepped = rMin;
-        if (stepped > rMax) stepped = rMax;
+        int stepped = (int)rMin + ((raw - (int)rMin + s/2) / s) * s;
+        if (stepped < (int)rMin) stepped = (int)rMin;
+        if (stepped > (int)rMax) stepped = (int)rMax;
         *(int*)value = stepped;
     }
 }
@@ -159,7 +156,7 @@ static void UpdateValueFromMouseGfx(int pos, int minPos, int maxPos, void *value
 /* ================= КНОПКА-СТРІЛКА З АВТОПОВТОРОМ ================= */
 
 static bool ArrowButtonGfx(int x, int y, int w, int h, ArrowDirectionGfx dir,
-                           void *value, void *minVal, void *maxVal, float step,
+                           void *value, double minVal, double maxVal, float step,
                            GuiSpinnerGfxValueType type, HoldStateGfx *hold,
                            uint32_t baseColor, GuiSpinnerGfxOrientation orient) {
     
@@ -171,24 +168,22 @@ static bool ArrowButtonGfx(int x, int y, int w, int h, ArrowDirectionGfx dir,
     if (over) btnColor = ColorBrighten(baseColor, 1.15f);
     if (over && gfx_is_mouse_down(GFX_MOUSE_LEFT)) btnColor = ColorBrighten(baseColor, 0.85f);
     
-    // 🔹 Використовуємо graphics.h примітиви
     DrawRectangleFast(x, y, w, h, btnColor);
     DrawRectangleLinesFast(x, y, w, h, GetContrastColor(btnColor));
     
-    // 🔹 Вершини стрілки для DrawTriangle (graphics.h)
+    /* 🔹 Вершини стрілки для DrawTriangle з graphics.h */
     int cx = x + w/2, cy = y + h/2, sz = w/3;
     int x1, y1, x2, y2, x3, y3;
     switch(dir) {
         case ARROW_GFX_LEFT:  x1=cx+sz; y1=cy-sz; x2=cx-sz; y2=cy; x3=cx+sz; y3=cy+sz; break;
         case ARROW_GFX_RIGHT: x1=cx-sz; y1=cy-sz; x2=cx+sz; y2=cy; x3=cx-sz; y3=cy+sz; break;
-        case ARROW_GFX_UP:    x1=cx-sz; y1=cy+sz; x2=cx;      y2=cy-sz; x3=cx+sz; y3=cy+sz; break;
-        case ARROW_GFX_DOWN:  x1=cx-sz; y1=cy-sz; x2=cx;      y2=cy+sz; x3=cx+sz; y3=cy-sz; break;
+        case ARROW_GFX_UP:    x1=cx-sz; y1=cy+sz; x2=cx; y2=cy-sz; x3=cx+sz; y3=cy+sz; break;
+        case ARROW_GFX_DOWN:  x1=cx-sz; y1=cy-sz; x2=cx; y2=cy+sz; x3=cx+sz; y3=cy-sz; break;
         default: return changed;
     }
     DrawTriangle(x1, y1, x2, y2, x3, y3, GetContrastInvertColor(btnColor));
     
-    // 🔹 Автоповтор
-    double now = GetTimeGfx();  // 🔹 Використовуємо вбудовану функцію з gfx.h
+    double now = GetTimeGfx();  // ✅ Використовуємо вбудовану функцію з gfx.h
     if (!hold->isHeld) { hold->lastUpdateTime = now; hold->accumulatedTime = 0; }
     double dt = now - hold->lastUpdateTime;
     hold->lastUpdateTime = now;
@@ -199,6 +194,7 @@ static bool ArrowButtonGfx(int x, int y, int w, int h, ArrowDirectionGfx dir,
     
     if (pressed) {
         hold->isHeld = true; hold->holdStartTime = now; hold->accumulatedTime = 0;
+        /* 🔹 ЗБЕРЕЖЕНО: swapped calls для сумісності gfx ↔ raylib */
         changed = incAction ? DecrementValueGfx(value, minVal, maxVal, step, type)
                            : IncrementValueGfx(value, minVal, maxVal, step, type);
     }
@@ -221,10 +217,10 @@ static bool ArrowButtonGfx(int x, int y, int w, int h, ArrowDirectionGfx dir,
 
 /* ================= МАЛЮВАННЯ СЛАЙДЕРА ================= */
 
-static void DrawSliderGfx(int x, int y, int w, int h, float norm, 
+static void DrawSliderGfx(int x, int y, int w, int h, float norm,
                           uint32_t color, GuiSpinnerGfxOrientation orient) {
-    const uint32_t TRACK_BG   = ColorBrighten(color, 0.40f);
-    const uint32_t TRACK_FILL = ColorBrighten(color, 0.70f);
+    const uint32_t TRACK_BG   = ColorBrighten(color, 0.50f);
+    const uint32_t TRACK_FILL = ColorBrighten(color, 0.90f);
     const uint32_t KNOB_COL   = GetContrastInvertColor(color);
     const uint32_t BORDER_COL = GetContrastColor(color);
     
@@ -233,14 +229,12 @@ static void DrawSliderGfx(int x, int y, int w, int h, float norm,
     if (orient == GUI_SPINNER_GFX_HORIZONTAL) {
         int fillW = (int)(norm * w);
         DrawRectangleFast(x, y, fillW, h, TRACK_FILL);
-        
         int knobX = x + fillW - SLIDER_KNOB_OFFSET;
         DrawRectangleFast(knobX, y+2, SLIDER_KNOB_SIZE, h-4, KNOB_COL);
         DrawRectangleLinesFast(knobX, y+2, SLIDER_KNOB_SIZE, h-4, BORDER_COL);
     } else {
         int fillH = (int)(norm * h);
         DrawRectangleFast(x, y + h - fillH, w, fillH, TRACK_FILL);
-        
         int knobY = y + h - fillH - SLIDER_KNOB_OFFSET;
         DrawRectangleFast(x+2, knobY, w-4, SLIDER_KNOB_SIZE, KNOB_COL);
         DrawRectangleLinesFast(x+2, knobY, w-4, SLIDER_KNOB_SIZE, BORDER_COL);
@@ -252,7 +246,7 @@ static void DrawSliderGfx(int x, int y, int w, int h, float norm,
 
 int Gui_SliderSpinner_GFX(int id, int centerX, int centerY, int width, int height,
                           const char *textLeft, const char *textRight,
-                          void *value, void *minValue, void *maxValue,
+                          void *value, double minVal, double maxVal,  // ✅ Скалярні min/max!
                           float step, GuiSpinnerGfxValueType valueType,
                           GuiSpinnerGfxOrientation orientation,
                           uint32_t baseColor, RasterFont font, int spacing,
@@ -278,13 +272,13 @@ int Gui_SliderSpinner_GFX(int id, int centerX, int centerY, int width, int heigh
     if (showButtons) {
         if (ArrowButtonGfx(lx, ly, btnSize, (orientation==GUI_SPINNER_GFX_HORIZONTAL)?height:btnSize,
                           (orientation==GUI_SPINNER_GFX_HORIZONTAL)?ARROW_GFX_LEFT:ARROW_GFX_DOWN,
-                          value, minValue, maxValue, step, valueType, holdL, baseColor, orientation)) changed = true;
+                          value, minVal, maxVal, step, valueType, holdL, baseColor, orientation)) changed = true;
         if (ArrowButtonGfx(rx, ry, btnSize, (orientation==GUI_SPINNER_GFX_HORIZONTAL)?height:btnSize,
                           (orientation==GUI_SPINNER_GFX_HORIZONTAL)?ARROW_GFX_RIGHT:ARROW_GFX_UP,
-                          value, minValue, maxValue, step, valueType, holdR, baseColor, orientation)) changed = true;
+                          value, minVal, maxVal, step, valueType, holdR, baseColor, orientation)) changed = true;
     }
     
-    float norm = NormalizeValueGfx(value, minValue, maxValue, valueType);
+    float norm = NormalizeValueGfx(value, minVal, maxVal, valueType);
     DrawSliderGfx(sx, sy, sliderW, sliderH, norm, baseColor, orientation);
     
     int mx = gfx_get_mouse_x(), my = gfx_get_mouse_y();
@@ -293,22 +287,19 @@ int Gui_SliderSpinner_GFX(int id, int centerX, int centerY, int width, int heigh
     if (sliderOver) {
         int wheel = gfx_get_mouse_wheel();
         if (wheel != 0) {
-            float delta = step * wheel;
+            double delta = step * wheel;
+            double rMin, rMax; bool rev;
+            _GetRange(minVal, maxVal, &rMin, &rMax, &rev);
+            
             if (valueType == GUI_SPINNER_GFX_FLOAT) {
                 float *v = (float*)value;
-                float a = *(float*)minValue, b = *(float*)maxValue;
-                bool rev = (a > b);
-                float rMin = fminf(a,b), rMax = fmaxf(a,b);
-                *v += rev ? delta : -delta;
-                if (*v < rMin) *v = rMin; if (*v > rMax) *v = rMax;
+                *v += rev ? (float)delta : -(float)delta;
+                if (*v < rMin) *v = (float)rMin; if (*v > rMax) *v = (float)rMax;
             } else {
                 int *v = (int*)value;
-                int a = *(int*)minValue, b = *(int*)maxValue;
-                bool rev = (a > b);
-                int rMin = (a<b)?a:b, rMax = (a>b)?a:b;
                 int s = (int)(step+0.5f);
-                *v += rev ? s*wheel : -s*wheel;
-                if (*v < rMin) *v = rMin; if (*v > rMax) *v = rMax;
+                *v += rev ? (int)(s*wheel) : -(int)(s*wheel);
+                if (*v < (int)rMin) *v = (int)rMin; if (*v > (int)rMax) *v = (int)rMax;
             }
             changed = true;
         }
@@ -319,9 +310,9 @@ int Gui_SliderSpinner_GFX(int id, int centerX, int centerY, int width, int heigh
     
     if (widgetActive[id]) {
         if (orientation == GUI_SPINNER_GFX_HORIZONTAL)
-            UpdateValueFromMouseGfx(mx, sx, sx+sliderW, value, minValue, maxValue, step, valueType, orientation);
+            UpdateValueFromMouseGfx(mx, sx, sx+sliderW, value, minVal, maxVal, step, valueType, orientation);
         else
-            UpdateValueFromMouseGfx(my, sy, sy+sliderH, value, minValue, maxValue, step, valueType, orientation);
+            UpdateValueFromMouseGfx(my, sy, sy+sliderH, value, minVal, maxVal, step, valueType, orientation);
         changed = true;
     }
     

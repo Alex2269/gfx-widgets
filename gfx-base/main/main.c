@@ -10,7 +10,7 @@ int spacing = 2;
 // Значення для тесту
 int iVal1 = 10;
 int iVal2 = 10;
-float fVal1 = 25.5f;
+float fVal1 = 0.5f;
 float fVal2 = 25.5f;
 float fVal3 = 25.5f;
 float fVal4 = 25.5f;
@@ -38,34 +38,34 @@ int main(void) {
         /* --- 4. ОЧИЩЕННЯ BACK-BUFFER --- */
         gfx_clear();  // Очищує back-buffer поточним фоновим кольором
 
-        // Горизонтальний спінер (float, крок 0.5)
+        // Горизонтальний спінер (float, крок 2.5)
         Gui_SliderSpinner_GFX(0, 300, 100, 320, 40, "Менше", "Більше",
-                              &fVal1, &floatMax, &floatMin,
-                              0.5, GUI_SPINNER_GFX_FLOAT, GUI_SPINNER_GFX_HORIZONTAL,
+                              &fVal1, floatMax, floatMin,
+                              2.5, GUI_SPINNER_GFX_FLOAT, GUI_SPINNER_GFX_HORIZONTAL,
                               YELLOW, TerminusBold24x12_font, spacing, showButtons);
 
-        // Горизонтальний спінер (float, крок 0.5)
+        // Горизонтальний спінер (float, крок 2.5)
         Gui_SliderSpinner_GFX(1, 300, 250, 320, 40, "Менше", "Більше",
-                              &fVal2, &floatMin, &floatMax,
-                              0.5f, GUI_SPINNER_GFX_FLOAT, GUI_SPINNER_GFX_HORIZONTAL,
+                              &fVal2, floatMin, floatMax,
+                              2.5f, GUI_SPINNER_GFX_FLOAT, GUI_SPINNER_GFX_HORIZONTAL,
                               GREEN, TerminusBold24x12_font, spacing, showButtons);
 
         // Вертикальний спінер (int, крок 1)
         Gui_SliderSpinner_GFX(2, 50, 175, 20, 240, "Вгору", "Вниз",
-                              &iVal1, &intMax, &intMin,
+                              &iVal1, intMax, intMin,
                               1, GUI_SPINNER_GFX_INT, GUI_SPINNER_GFX_VERTICAL,
                               BLUE, Terminus12x6_font, spacing, showButtons);
 
-        // Вертикальний спінер (float, крок 0.5)
+        // Вертикальний спінер (float, крок 2.5)
         Gui_SliderSpinner_GFX(3, 550, 175, 20, 240, "Вгору", "Вниз",
-                              &fVal3, &floatMin, &floatMax,
-                              0.5f, GUI_SPINNER_GFX_FLOAT, GUI_SPINNER_GFX_VERTICAL,
+                              &fVal3, floatMin, floatMax,
+                              2.5f, GUI_SPINNER_GFX_FLOAT, GUI_SPINNER_GFX_VERTICAL,
                               RED, Terminus12x6_font, spacing, showButtons);
 
-        // Горизонтальний спінер (float, крок 0.5)
+        // Горизонтальний спінер (float, крок 2.5)
         Gui_SliderSpinner_GFX(4, 300, 300, 320, 20, "Менше", "Більше",
-                              &fVal4, &floatMin, &floatMax,
-                              0.5f, GUI_SPINNER_GFX_FLOAT, GUI_SPINNER_GFX_HORIZONTAL,
+                              &fVal4, floatMin, floatMax,
+                              2.5f, GUI_SPINNER_GFX_FLOAT, GUI_SPINNER_GFX_HORIZONTAL,
                               RED, Terminus12x6_font, spacing, !showButtons);
 
         // Відображення інформації вгорі
