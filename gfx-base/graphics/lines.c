@@ -108,3 +108,32 @@ void DrawThickLine(int x1, int y1, int x2, int y2, int thickness, uint32_t color
 void DrawLineEx(int x1, int y1, int x2, int y2, float thickness, uint32_t color) {
     DrawThickLine(x1, y1, x2, y2, (int)thickness, color);
 }
+
+/* ============================================================================
+🔹 ЛІНІЯ З ТОВЩИНОЮ (Vector2 версія для сумісності)                           *
+ ============================================================================ */
+void DrawLineExVec2(Vector2 p1, Vector2 p2, float thickness, uint32_t color) {
+    gfx_set_color_uint32(color);
+
+    if (thickness <= 1.0f) {
+        gfx_line((int)p1.x, (int)p1.y, (int)p2.x, (int)p2.y);
+        return;
+    }
+
+    /* Малюємо кілька паралельних ліній для імітації товщини */
+    float dx = p2.x - p1.x;
+    float dy = p2.y - p1.y;
+    float len = sqrtf(dx*dx + dy*dy);
+    if (len < 0.001f) return;
+
+    float nx = -dy / len;  /* Нормаль */
+    float ny = dx / len;
+
+    int layers = (int)thickness;
+    for (int i = -layers/2; i <= layers/2; i++) {
+        float ox = nx * i;
+        float oy = ny * i;
+        gfx_line((int)(p1.x + ox), (int)(p1.y + oy),
+                 (int)(p2.x + ox), (int)(p2.y + oy));
+    }
+}
